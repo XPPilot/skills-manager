@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow, bail};
+use app_lib::core::scanner;
 use app_lib::commands::{presets as preset_cmd, skills as cmd, tools as tool_cmd};
 use app_lib::core::{
     app_state, audit_log::AuditDraft, central_repo, error::AppError, git_backup, git_fetcher,
@@ -2119,21 +2120,39 @@ fn run_adopt(
             continue;
         }
 
-        for entry in std::fs::read_dir(&path)? {
-            let entry = entry?;
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
+        // XPPilot fork (2026-09-26): support multi-level layouts like
+        // <root>/<category>/<skill>/SKILL.md by reusing the shared recursive
+        // scanner; fall back to flat classification to keep skip reasons.
+        let discovered = scanner::collect_skill_dirs(&path);
+        if discovered.is_empty() {
+            for entry in std::fs::read_dir(&path)? {
+                let entry = entry?;
+                let dir = entry.path();
+                if !dir.is_dir() {
+                    continue;
+                }
+                let is_symlink = entry.file_type()?.is_symlink();
+                classify_adopt_candidate(
+                    &dir,
+                    is_symlink,
+                    &excluded,
+                    &central_root_canonical,
+                    &mut candidates,
+                    &mut skipped,
+                );
             }
-            let is_symlink = entry.file_type()?.is_symlink();
-            classify_adopt_candidate(
-                &dir,
-                is_symlink,
-                &excluded,
-                &central_root_canonical,
-                &mut candidates,
-                &mut skipped,
-            );
+        } else {
+            for dir in discovered {
+                let is_symlink = dir.is_symlink();
+                classify_adopt_candidate(
+                    &dir,
+                    is_symlink,
+                    &excluded,
+                    &central_root_canonical,
+                    &mut candidates,
+                    &mut skipped,
+                );
+            }
         }
     }
 
